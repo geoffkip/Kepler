@@ -125,10 +125,28 @@ export const fetchHeartRate = async (date = 'today', period = '1d') => {
 
 // Sleep API (v1.2) - Was previously missing slash '/sleepdate/' -> '/sleep/date/'
 // Sleep API (v1.2) - Was previously missing slash '/sleepdate/' -> '/sleep/date/'
+// Sleep API (v1.2) - Was previously missing slash '/sleepdate/' -> '/sleep/date/'
 export const fetchSleep = async (date = 'today') => {
     const dateStr = date === 'today' ? getTodayDate() : date;
     // v1.2 is required for sleep stages
-    const data = await requestWithCache(`/user/-/sleep/date/${dateStr}.json`, dateStr, true);
+    let data = await requestWithCache(`/user/-/sleep/date/${dateStr}.json`, dateStr, true);
+
+    // Fallback: If "today" (or the explicit date matches today) has no sleep data, try yesterday.
+    const isToday = date === 'today' || dateStr === getTodayDate();
+
+    if (isToday && (!data || !data.sleep || data.sleep.length === 0)) {
+        console.log("No sleep data for today, trying yesterday...");
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        // FIX: Use local time for yesterday string
+        const year = yesterday.getFullYear();
+        const month = String(yesterday.getMonth() + 1).padStart(2, '0');
+        const day = String(yesterday.getDate()).padStart(2, '0');
+        const yStr = `${year}-${month}-${day}`;
+
+        data = await requestWithCache(`/user/-/sleep/date/${yStr}.json`, yStr, true);
+    }
     return data;
 };
 

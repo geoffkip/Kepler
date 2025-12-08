@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchSleep, fetchSleepHistory, fetchHeartRate, fetchActivitySummary } from '../services/fitbitApi';
 import { processSleepData, calculateSleepConsistency, calculateSleepDebt, processStrainData, calculateSleepNeed } from '../utils/calculations';
 import Card from '../components/ui/Card';
@@ -7,7 +7,11 @@ import CircularMetric from '../components/ui/CircularMetric';
 
 const SleepDetails = () => {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const dateParam = searchParams.get('date');
     const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
 
     useEffect(() => {
         const loadData = async () => {
@@ -102,6 +106,8 @@ const SleepDetails = () => {
             } catch (error) {
                 console.error("Critical Error fetching sleep details", error);
                 setData(processSleepData(null));
+            } finally {
+                setLoading(false);
             }
         };
         loadData();
@@ -132,6 +138,8 @@ const SleepDetails = () => {
             <div className="flex justify-center mb-8">
                 <CircularMetric value={data.score} label="Sleep" color={getScoreColor(data.score)} size={200} />
             </div>
+
+
 
             <div className="grid grid-cols-2 gap-4 mb-4">
                 <Card>
