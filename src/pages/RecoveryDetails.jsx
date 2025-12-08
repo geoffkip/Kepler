@@ -55,7 +55,7 @@ const RecoveryDetails = () => {
             <div className="grid grid-cols-1 gap-4">
                 <Card>
                     <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2">HRV (Heart Rate Variability)</h3>
-                    <div className="text-2xl font-bold">{data.hrv} <span className="text-sm text-gray-500 font-normal">ms</span></div>
+                    <div className="text-2xl font-bold">{Math.round(Number(data.hrv || 0))} <span className="text-sm text-gray-500 font-normal">ms</span></div>
                     <p className="text-xs text-gray-500 mt-1">Higher is generally better.</p>
                 </Card>
                 <Card>

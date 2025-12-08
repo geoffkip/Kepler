@@ -1,24 +1,29 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { parseCallback } from '../services/auth';
 
 const Callback = () => {
     const navigate = useNavigate();
+    const location = useLocation();
     const [error, setError] = useState(null);
 
     useEffect(() => {
-        try {
-            const result = parseCallback();
-            if (result) {
-                navigate('/dashboard');
-            } else {
-                setError('Failed to retrieve access token. Please check console logs.');
+        const process = async () => {
+            try {
+                // Pass the Router location hash explicitly
+                const result = await parseCallback(location.hash);
+                if (result) {
+                    navigate('/'); // Go to root (which redirects to dashboard via PrivateRoute)
+                } else {
+                    setError('Failed to retrieve access token. Please check console logs.');
+                }
+            } catch (err) {
+                console.error('Error in callback processing:', err);
+                setError('An unexpected error occurred.');
             }
-        } catch (err) {
-            console.error('Error in callback processing:', err);
-            setError('An unexpected error occurred.');
-        }
-    }, [navigate]);
+        };
+        process();
+    }, [navigate, location]);
 
     if (error) {
         return (

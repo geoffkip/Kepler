@@ -1,5 +1,8 @@
 {
   "appId": "com.kepler.health",
   "appName": "KeplerHealth",
-  "webDir": "dist"
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http"
+  }
 }

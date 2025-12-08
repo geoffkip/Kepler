@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -8,15 +7,17 @@ import {
     fetchHRV,
     fetchSpO2,
     fetchBreathingRate,
-    fetchActivitySummary
+    fetchActivitySummary,
+    fetchSkinTemp
 } from '../services/fitbitApi';
-import { logout } from '../services/auth';
+import { logout, getAccessToken } from '../services/auth';
 import CircularMetric from '../components/ui/CircularMetric';
 import Card from '../components/ui/Card';
 import {
     processStrainData,
     processRecoveryData,
     processSleepData,
+    processSkinTempData,
     calculateSleepNeed,
     getMockStrainData,
     getMockRecoveryData,
@@ -36,6 +37,9 @@ const Dashboard = () => {
     useEffect(() => {
         const loadData = async () => {
             try {
+                const token = await getAccessToken();
+                // alert(`Dashboard Mount.Token: ${ token ? 'OK' : 'MISSING' } `); // Optional verify
+
                 // Initialize with empty/zero data so we can render even if fetch fails
                 setStrainData(processStrainData(null, null));
                 setRecoveryData(processRecoveryData(null, null, null, null, null)); // Added null for rhr
@@ -44,27 +48,83 @@ const Dashboard = () => {
                 const profileData = await fetchProfile();
                 setProfile(profileData.user);
 
-                // Fetch all required data using allSettled to prevent one failure from breaking everything
-                const results = await Promise.allSettled([
-                    fetchHeartRate(),
-                    fetchSleep(),
-                    fetchHRV(),
-                    fetchSpO2(),
-                    fetchBreathingRate(),
-                    fetchActivitySummary()
-                ]);
+                setProfile(profileData.user);
+
+                // SEQUENTIAL EXECUTION STRATEGY
+                // We execute one by one to avoid overwhelming the mobile network stack
+                // and to isolate failures more clearly.
+
+                const results = [];
+
+                // Helper to safely fetch
+                const safeFetch = async (name, promise) => {
+                    try {
+                        const value = await promise;
+                        return { status: 'fulfilled', value };
+                    } catch (reason) {
+                        return { status: 'rejected', reason };
+                    }
+                };
+
+                // 1. Heart Rate
+                results.push(await safeFetch('Heart Rate', fetchHeartRate()));
+
+                // 2. Sleep
+                results.push(await safeFetch('Sleep', fetchSleep()));
+
+                // 3. HRV
+                results.push(await safeFetch('HRV', fetchHRV()));
+
+                // 4. SpO2
+                results.push(await safeFetch('SpO2', fetchSpO2()));
+
+                // 5. Breathing Rate
+                results.push(await safeFetch('Breathing Rate', fetchBreathingRate()));
+
+                // 6. Activity
+                results.push(await safeFetch('Activity', fetchActivitySummary()));
 
                 const [hrResult, sleepResult, hrvResult, spo2Result, brResult, activityResult] = results;
 
-                // Collect errors
+                // Collect errors and successes
                 const newErrors = [];
+                const debugMessages = [];
+
                 results.forEach((result, index) => {
+                    const apiNames = ['Heart Rate', 'Sleep', 'HRV', 'SpO2', 'Breathing Rate', 'Activity'];
+                    const name = apiNames[index];
+
                     if (result.status === 'rejected') {
-                        const apiNames = ['Heart Rate', 'Sleep', 'HRV', 'SpO2', 'Breathing Rate', 'Activity'];
-                        console.error(`API Call ${apiNames[index]} failed:`, result.reason);
-                        newErrors.push(`${apiNames[index]}: ${result.reason.message}`);
+                        console.error(`API Call ${name} failed:`, result.reason);
+                        // Extract concise error (e.g. "Error: 403 Forbidden" or "TypeError...")
+                        const errorMsg = result.reason.message || String(result.reason);
+                        newErrors.push(`${name}: ${errorMsg}`);
+                        debugMessages.push(`${name}: ❌ ${errorMsg}`);
+                    } else {
+                        const val = result.value;
+                        let sizeInfo = "0";
+
+                        // Specific size checks per type
+                        if (index === 0) sizeInfo = val?.['activities-heart']?.length || 0; // HR
+                        if (index === 1) sizeInfo = val?.sleep?.length || 0; // Sleep
+                        if (index === 2) sizeInfo = val?.hrv?.length || 0; // HRV
+                        if (index === 3) sizeInfo = val?.value?.avg ? "1" : "0"; // SpO2 (single day usually has avg)
+                        if (index === 4) sizeInfo = val?.br?.length || 0; // BR
+                        if (index === 5) sizeInfo = val?.summary ? "OK" : "Empty"; // Activity
+
+                        console.log(`${name} Success. Size: ${sizeInfo}`);
+                        debugMessages.push(`${name}: ✅ (${sizeInfo})`);
                     }
                 });
+
+                // Consolidated Alert - REMOVED for production
+                if (newErrors.length > 0) {
+                    console.error("Dashboard Errors:", newErrors);
+                    // Optional: Toast or non-intrusive notification
+                } else {
+                    console.log("Dashboard Loaded Successfully");
+                }
+
                 setErrors(newErrors);
 
                 const activityData = activityResult.status === 'fulfilled' ? activityResult.value : null;
@@ -96,7 +156,7 @@ const Dashboard = () => {
 
             } catch (error) {
                 console.error("Error in main dashboard load", error);
-                setErrors(prev => [...prev, `Main Load Error: ${error.message}`]);
+                setErrors(prev => [...prev, `Main Load Error: ${error.message} `]);
             } finally {
                 setLoading(false);
             }
@@ -112,8 +172,8 @@ const Dashboard = () => {
 
     // Check if journal is logged for today
     const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const isJournalLogged = localStorage.getItem(`journal_${today}`);
+    const today = `${now.getFullYear()} -${String(now.getMonth() + 1).padStart(2, '0')} -${String(now.getDate()).padStart(2, '0')} `;
+    const isJournalLogged = localStorage.getItem(`journal_${today} `);
 
     const getScoreColor = (score) => {
         if (score >= 67) return 'green';
@@ -188,15 +248,16 @@ const Dashboard = () => {
 
 
                 {/* Main Metrics Carousel or Stack */}
-                <div className="flex justify-center gap-4 overflow-x-auto pb-4">
+                {/* Main Metrics - Compact Single Row */}
+                <div className="grid grid-cols-3 gap-2 w-full justify-items-center">
                     <div onClick={() => navigate('/strain')} className="cursor-pointer transition-transform hover:scale-105">
-                        <CircularMetric value={strainData.score} label="Strain" color="blue" size={160} />
+                        <CircularMetric value={strainData.score} label="Strain" color="blue" size={105} />
                     </div>
                     <div onClick={() => navigate('/recovery')} className="cursor-pointer transition-transform hover:scale-105">
-                        <CircularMetric value={recoveryData.score} label="Recovery" color={getScoreColor(recoveryData.score)} size={140} />
+                        <CircularMetric value={Math.round(recoveryData.score * 10) / 10} label="Recovery" color={getScoreColor(recoveryData.score)} size={105} />
                     </div>
                     <div onClick={() => navigate('/sleep')} className="cursor-pointer transition-transform hover:scale-105">
-                        <CircularMetric value={sleepData.score} label="Sleep" color={getScoreColor(sleepData.score)} size={140} />
+                        <CircularMetric value={sleepData.score} label="Sleep" color={getScoreColor(sleepData.score)} size={105} />
                     </div>
                 </div>
 

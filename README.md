@@ -12,8 +12,8 @@ Kepler Health aggregates your Fitbit data to calculate advanced metrics like **S
 *   **Recovery Score**: Analysis of HRV, Resting Heart Rate, and Sleep to determine your readiness to train (Green/Yellow/Red).
 *   **Sleep Performance**: Detailed breakdown of sleep stages, efficiency, and sleep need vs. actual sleep.
 *   **Health Monitor**: Live view of vital signs including SpO2, Skin Temperature, and Breathing Rate.
-*   **Trends**: Long-term analysis of your metrics to spot improvement or fatigue.
-*   **Weekly Report**: A summarized report card of your week's performance.
+*   **Persistent Login**: Uses Native Android Storage to keep you logged in securely.
+*   **Native Networking**: Bypasses CORS/WebView limits using `CapacitorHttp` for reliable data syncing.
 
 ## 🛠️ Technology Stack
 
@@ -21,6 +21,8 @@ Kepler Health aggregates your Fitbit data to calculate advanced metrics like **S
 *   **Styling**: TailwindCSS
 *   **Charts**: Recharts
 *   **Mobile**: Ionic Capacitor (Android)
+*   **Storage**: @capacitor/preferences (Native)
+*   **Networking**: @capacitor/core / CapacitorHttp (Native)
 *   **API**: Fitbit Web API
 
 ## 📦 Installation
@@ -43,7 +45,7 @@ Kepler Health aggregates your Fitbit data to calculate advanced metrics like **S
     VITE_FITBIT_REDIRECT_URI=http://localhost:5173/callback
     ```
 
-4.  **Run Locally**
+4.  **Run Locally (Web)**
     ```bash
     npm run dev
     ```

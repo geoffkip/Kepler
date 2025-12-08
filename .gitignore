@@ -115,8 +115,12 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
+# OS
+.DS_Store
+
 # Vite
-dist-ssr
+dist/
+dist-ssr/
 *.local
 
 # Capacitor

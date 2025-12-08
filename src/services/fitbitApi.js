@@ -1,39 +1,84 @@
-import { getAccessToken } from './auth';
+import { Preferences } from '@capacitor/preferences';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { getAccessToken, logout } from './auth';
 
-const BASE_URL = '/api/fitbit';
+const isNative = Capacitor.isNativePlatform();
+
+// Web uses Proxy (/api/fitbit -> https://api.fitbit.com/1)
+// Native uses Direct (https://api.fitbit.com/1)
+const BASE_URL = isNative ? 'https://api.fitbit.com/1' : '/api/fitbit';
+const BASE_URL_V1_2 = isNative ? 'https://api.fitbit.com/1.2' : '/api/fitbit-v1.2';
 
 const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 
-const headers = () => {
-    const token = getAccessToken();
+const getHeaders = async () => {
+    const token = await getAccessToken();
     if (!token) throw new Error("No access token");
     return {
-        Authorization: `Bearer ${token} `,
+        Authorization: `Bearer ${token}`,
     };
 };
 
 const request = async (url) => {
-    const response = await fetch(url, { headers: headers() });
-    if (!response.ok) {
-        if (response.status === 401) {
-            // Token expired or invalid
-            localStorage.removeItem('fitbit_access_token');
-            localStorage.removeItem('fitbit_user_id');
-            window.location.href = '/'; // Force re-login
-            throw new Error("Unauthorized");
+    console.log(`Fetching: ${url}`); // Debug Log
+    try {
+        const headers = await getHeaders();
+        const isNativePlatform = Capacitor.isNativePlatform();
+
+        if (isNativePlatform) {
+            // NATIVE: Use CapacitorHttp to bypass WebView CORS/SSL issues
+            const options = {
+                url: url,
+                headers: headers,
+            };
+            const response = await CapacitorHttp.get(options);
+
+            // CapacitorHttp returns .status and .data directly
+            if (response.status >= 400) {
+                if (response.status === 401) {
+                    await logout();
+                    throw new Error("Unauthorized");
+                }
+                if (response.status === 429) {
+                    throw new Error("Rate Limit Exceeded");
+                }
+                // response.data might be an object or string
+                const errorText = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+                throw new Error(`API Error ${response.status} at ${url}: ${errorText}`);
+            }
+            return response.data; // Native returns parsed JSON usually
+
+        } else {
+            // WEB: Use standard fetch (proxied)
+            const response = await fetch(url, { headers });
+            if (!response.ok) {
+                if (response.status === 401) {
+                    await logout();
+                    throw new Error("Unauthorized");
+                }
+                if (response.status === 429) {
+                    throw new Error("Rate Limit Exceeded. Please wait a while.");
+                }
+                const text = await response.text();
+                throw new Error(`API Error ${response.status} at ${url}: ${text}`);
+            }
+            return response.json();
         }
-        if (response.status === 429) {
-            throw new Error("Rate Limit Exceeded. Please wait a while.");
-        }
-        const text = await response.text();
-        throw new Error(`API Error ${response.status}: ${text}`);
+
+    } catch (error) {
+        throw new Error(`Request Failed for ${url}: ${error.message}`);
     }
-    return response.json();
 };
 
 const requestWithCache = async (endpoint, cacheKeySuffix, isV12 = false, cacheTime = CACHE_DURATION) => {
+    // endpoint usually starts with /user/...
+    const baseUrl = isV12 ? BASE_URL_V1_2 : BASE_URL;
+    // Construct full URL
+    const fullUrl = `${baseUrl}${endpoint}`;
+
+    // Cache logic using Preferences
     const cacheKey = `fitbit_cache_${endpoint}_${cacheKeySuffix}`;
-    const cached = localStorage.getItem(cacheKey);
+    const { value: cached } = await Preferences.get({ key: cacheKey });
 
     if (cached) {
         const { timestamp, data } = JSON.parse(cached);
@@ -43,13 +88,15 @@ const requestWithCache = async (endpoint, cacheKeySuffix, isV12 = false, cacheTi
         }
     }
 
-    const baseUrl = isV12 ? '/api/fitbit-v1.2' : BASE_URL;
-    const data = await request(`${baseUrl}${endpoint}`);
+    const data = await request(fullUrl);
     try {
-        localStorage.setItem(cacheKey, JSON.stringify({
-            timestamp: Date.now(),
-            data
-        }));
+        await Preferences.set({
+            key: cacheKey,
+            value: JSON.stringify({
+                timestamp: Date.now(),
+                data
+            })
+        });
     } catch (e) {
         console.warn("Failed to save to cache", e);
     }
@@ -76,48 +123,36 @@ export const fetchHeartRate = async (date = 'today', period = '1d') => {
     return requestWithCache(`/user/-/activities/heart/date/${dateStr}/${period}.json`, `${dateStr}_${period}`);
 };
 
+// Sleep API (v1.2) - Was previously missing slash '/sleepdate/' -> '/sleep/date/'
 export const fetchSleep = async (date = 'today') => {
     const dateStr = date === 'today' ? getTodayDate() : date;
-    // Note: Sleep API is v1.2, handled by proxy rewrite rule for /api/fitbit-v1.2
-    // My proxy config: '/api/fitbit-v1.2' -> 'https://api.fitbit.com/1.2'
-    // BUT 'request' uses BASE_URL ('/api/fitbit') by default.
-    // I need to override the base url logic or manually construct the url for sleep.
-    // Simplest fix: Just use the explicit proxy path for v1.2 here.
-    const V12_BASE_URL = '/api/fitbit-v1.2';
-    // We can't reuse requestWithCache easily if it hardcodes BASE_URL.
-    // Let's modify request function to handle full URLs or just make a manual call here.
-    // OR BETTER: Modify requestWithCache to accept an optional baseUrl logic, but for now I'll just do a manual cached request logic or update requestWithCache.
-    // Actually, let's just make requestWithCache robust to starting with /.
-
-    // Changing approach: I will modify requestWithCache in a separate edit to allow overriding base URL.
-    // For now, I will assume I can pass a full path if I tweak the helper.
-    // Wait, let's just use the fetch directly for now or see below.
-
-    // To avoid breaking changes, I'll temporarily hack it by using '..' to go up if needed, but that's messy.
-    // No, let's fix requestWithCache/request to handle absolute paths or differnet bases.
-    // See separate edit for request/requestWithCache.
-
-    return requestWithCache(`/user/-/sleep/date/${dateStr}.json`, dateStr, true); // Added IsV12 flag
+    // v1.2 is required for sleep stages
+    return requestWithCache(`/user/-/sleep/date/${dateStr}.json`, dateStr, true);
 };
 
+// HRV API (v1)
 export const fetchHRV = async (date = 'today') => {
     const dateStr = date === 'today' ? getTodayDate() : date;
-    return requestWithCache(`/user/-/hrv/date/${dateStr}.json`, dateStr);
+    return requestWithCache(`/user/-/hrv/date/${dateStr}.json`, dateStr, false); // Explicitly v1
 };
 
+// SpO2 API (v1)
 export const fetchSpO2 = async (date = 'today') => {
     const dateStr = date === 'today' ? getTodayDate() : date;
-    return requestWithCache(`/user/-/spo2/date/${dateStr}.json`, dateStr);
+    return requestWithCache(`/user/-/spo2/date/${dateStr}.json`, dateStr, false); // Explicitly v1
 };
 
+// Breathing Rate API (v1)
 export const fetchBreathingRate = async (date = 'today') => {
     const dateStr = date === 'today' ? getTodayDate() : date;
-    return requestWithCache(`/user/-/br/date/${dateStr}.json`, dateStr);
+    // Docs say v1, user saw failure with 1.2
+    return requestWithCache(`/user/-/br/date/${dateStr}.json`, dateStr, false); // Explicitly v1
 };
 
+// Skin Temp (v1)
 export const fetchSkinTemp = async (date = 'today') => {
     const dateStr = date === 'today' ? getTodayDate() : date;
-    return requestWithCache(`/user/-/temp/skin/date/${dateStr}.json`, dateStr);
+    return requestWithCache(`/user/-/temp/skin/date/${dateStr}.json`, dateStr, false); // Explicitly v1
 };
 
 export const fetchActivitySummary = async (date = 'today') => {
