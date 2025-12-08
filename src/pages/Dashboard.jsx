@@ -111,7 +111,8 @@ const Dashboard = () => {
     const sleepNeed = strainData ? calculateSleepNeed(strainData.score, 0) : 8; // Default 8 if no data
 
     // Check if journal is logged for today
-    const today = new Date().toISOString().split('T')[0];
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const isJournalLogged = localStorage.getItem(`journal_${today}`);
 
     const getScoreColor = (score) => {
@@ -184,17 +185,7 @@ const Dashboard = () => {
                     </div>
                 )}
 
-                {/* DEBUG SECTION */}
-                <div className="bg-gray-800 p-4 rounded text-xs font-mono overflow-auto max-h-60">
-                    <h3 className="text-red-400 font-bold mb-2">DEBUG DATA</h3>
-                    <p><strong>Profile:</strong> {profile ? 'Loaded' : 'Null'}</p>
-                    <p><strong>Errors:</strong></p>
-                    <ul className="list-disc pl-4 text-red-300">
-                        {errors.map((e, i) => <li key={i}>{e}</li>)}
-                    </ul>
-                    <p><strong>Strain Data:</strong> {JSON.stringify(strainData)}</p>
-                    <p><strong>Raw HR Data (First bit):</strong> {JSON.stringify(hrDataRef.current).substring(0, 500)}</p>
-                </div>
+
 
                 {/* Main Metrics Carousel or Stack */}
                 <div className="flex justify-center gap-4 overflow-x-auto pb-4">

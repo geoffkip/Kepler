@@ -17,7 +17,8 @@ const Journal = () => {
 
     useEffect(() => {
         // Check if already logged for today
-        const today = new Date().toISOString().split('T')[0];
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
         const journal = localStorage.getItem(`journal_${today}`);
         if (journal) {
             setFormData(JSON.parse(journal));
@@ -35,7 +36,8 @@ const Journal = () => {
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        const today = new Date().toISOString().split('T')[0];
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
         localStorage.setItem(`journal_${today}`, JSON.stringify(formData));
         setSaved(true);
         setTimeout(() => navigate('/'), 1500);

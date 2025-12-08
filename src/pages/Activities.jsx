@@ -9,11 +9,13 @@ const Activities = () => {
     const [loading, setLoading] = useState(true);
     const [offset, setOffset] = useState(0);
     const [hasMore, setHasMore] = useState(true);
+    const [error, setError] = useState(null);
     const LIMIT = 20;
 
     const loadData = async (currentOffset) => {
         try {
             setLoading(true);
+            setError(null);
             const data = await fetchRecentActivities(LIMIT, currentOffset);
             const newActivities = data.activities || [];
 
@@ -28,6 +30,7 @@ const Activities = () => {
             }
         } catch (error) {
             console.error("Error loading activities", error);
+            setError(error.message);
         } finally {
             setLoading(false);
         }
@@ -51,7 +54,14 @@ const Activities = () => {
             </div>
 
             <div className="space-y-4">
-                {activities.length === 0 && !loading ? (
+                {error && (
+                    <div className="bg-red-900/50 border border-red-500 p-4 rounded-xl text-red-200 mb-4">
+                        <h3 className="font-bold">Error Loading Activities</h3>
+                        <p className="text-sm">{error}</p>
+                    </div>
+                )}
+
+                {activities.length === 0 && !loading && !error ? (
                     <div className="text-gray-500 text-center py-10">No recent activities found.</div>
                 ) : (
                     activities.map((activity, index) => (

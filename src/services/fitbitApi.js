@@ -31,13 +31,13 @@ const request = async (url) => {
     return response.json();
 };
 
-const requestWithCache = async (endpoint, cacheKeySuffix, isV12 = false) => {
+const requestWithCache = async (endpoint, cacheKeySuffix, isV12 = false, cacheTime = CACHE_DURATION) => {
     const cacheKey = `fitbit_cache_${endpoint}_${cacheKeySuffix}`;
     const cached = localStorage.getItem(cacheKey);
 
     if (cached) {
         const { timestamp, data } = JSON.parse(cached);
-        if (Date.now() - timestamp < CACHE_DURATION) {
+        if (Date.now() - timestamp < cacheTime) {
             console.log(`Returning cached data for ${endpoint} (${cacheKeySuffix})`);
             return data;
         }
@@ -61,7 +61,14 @@ export const fetchProfile = async () => {
     return requestWithCache('/user/-/profile.json', 'profile');
 };
 
-const getTodayDate = () => new Date().toISOString().split('T')[0];
+const getTodayDate = () => {
+    // Return local date string YYYY-MM-DD
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
 
 export const fetchHeartRate = async (date = 'today', period = '1d') => {
     const dateStr = date === 'today' ? getTodayDate() : date;
@@ -123,7 +130,23 @@ export const fetchActivitySummary = async (date = 'today') => {
 
 export const fetchRecentActivities = async (limit = 20, offset = 0) => {
     // GET https://api.fitbit.com/1/user/-/activities/list.json?sort=desc&limit=20&offset=0
-    const data = await requestWithCache(`/user/-/activities/list.json?sort=desc&limit=${limit}&offset=${offset}`, `recent_activities_${limit}_${offset}`);
+    // ERROR FIX: Must provide beforeDate or afterDate.
+    // We use beforeDate = tomorrow to ensure we get today's activities in descending order.
+
+    const now = new Date();
+    now.setDate(now.getDate() + 1); // Tomorrow
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const tomorrowStr = `${year}-${month}-${day}`;
+
+    // Cache for only 1 minute to keep list fresh
+    const data = await requestWithCache(
+        `/user/-/activities/list.json?beforeDate=${tomorrowStr}&sort=desc&limit=${limit}&offset=${offset}`,
+        `recent_activities_${tomorrowStr}_${limit}_${offset}`,
+        false,
+        60 * 1000 // 1 minute
+    );
     console.log("Recent Activities RAW:", data);
     return data;
 };
