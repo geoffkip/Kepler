@@ -8,7 +8,8 @@ import {
     fetchSpO2,
     fetchBreathingRate,
     fetchActivitySummary,
-    fetchSkinTemp
+    fetchSkinTemp,
+    fetchSleepHistory
 } from '../services/fitbitApi';
 import { logout, getAccessToken } from '../services/auth';
 import CircularMetric from '../components/ui/CircularMetric';
@@ -19,6 +20,8 @@ import {
     processSleepData,
     processSkinTempData,
     calculateSleepNeed,
+    calculateSleepDebt,
+    formatDuration,
     getMockStrainData,
     getMockRecoveryData,
     getMockSleepData
@@ -84,14 +87,19 @@ const Dashboard = () => {
                 // 6. Activity
                 results.push(await safeFetch('Activity', fetchActivitySummary()));
 
-                const [hrResult, sleepResult, hrvResult, spo2Result, brResult, activityResult] = results;
+                const { calculateSleepDebt, calculateSleepConsistency, formatDuration } = await import('../utils/calculations'); // Dynamic import for safety
+
+                // 7. Sleep History (for Debt calculation)
+                results.push(await safeFetch('Sleep History', fetchSleepHistory(7)));
+
+                const [hrResult, sleepResult, hrvResult, spo2Result, brResult, activityResult, historyResult] = results;
 
                 // Collect errors and successes
                 const newErrors = [];
                 const debugMessages = [];
 
                 results.forEach((result, index) => {
-                    const apiNames = ['Heart Rate', 'Sleep', 'HRV', 'SpO2', 'Breathing Rate', 'Activity'];
+                    const apiNames = ['Heart Rate', 'Sleep', 'HRV', 'SpO2', 'Breathing Rate', 'Activity', 'Sleep History'];
                     const name = apiNames[index];
 
                     if (result.status === 'rejected') {
@@ -111,6 +119,7 @@ const Dashboard = () => {
                         if (index === 3) sizeInfo = val?.value?.avg ? "1" : "0"; // SpO2 (single day usually has avg)
                         if (index === 4) sizeInfo = val?.br?.length || 0; // BR
                         if (index === 5) sizeInfo = val?.summary ? "OK" : "Empty"; // Activity
+                        if (index === 6) sizeInfo = val?.sleep?.length || 0; // Sleep History
 
                         console.log(`${name} Success. Size: ${sizeInfo}`);
                         debugMessages.push(`${name}: ✅ (${sizeInfo})`);
@@ -132,6 +141,9 @@ const Dashboard = () => {
                 const hrvData = hrvResult.status === 'fulfilled' ? hrvResult.value : null;
                 const spo2Data = spo2Result.status === 'fulfilled' ? spo2Result.value : null;
                 const brData = brResult.status === 'fulfilled' ? brResult.value : null;
+                // New:
+                const sleepHistory = historyResult.status === 'fulfilled' ? historyResult.value : null;
+                const debt = calculateSleepDebt(sleepHistory);
 
                 // Store raw HR data for debugging
                 hrDataRef.current = hrData;
@@ -154,6 +166,19 @@ const Dashboard = () => {
                 setRecoveryData(processedRecovery);
                 setSleepData(processedSleepUpdated);
 
+                // Store calculated debt in state if needed, or just derived? 
+                // Let's store it in a new state or just calculate derived.
+                // Actually simpler to store derived data in a state object "metrics" or just use local vars.
+                // For now, let's put it in a Ref or just calculate during render if we had state. 
+                // Wait, logic is: render depends on state. We need to set state.
+                // Let's add `debt` to `sleepData` or separate state. 
+                // easiest is setSleepData({...processedSleepUpdated, debt})
+
+                setSleepData({
+                    ...processedSleepUpdated,
+                    debt: debt
+                });
+
             } catch (error) {
                 console.error("Error in main dashboard load", error);
                 setErrors(prev => [...prev, `Main Load Error: ${error.message} `]);
@@ -167,13 +192,14 @@ const Dashboard = () => {
 
     if (loading) return <div className="text-white p-4">Loading...</div>;
 
-    const isRateLimited = errors.some(e => e.includes("Rate Limit Exceeded"));
-    const sleepNeed = strainData ? calculateSleepNeed(strainData.score, 0) : 8; // Default 8 if no data
 
-    // Check if journal is logged for today
-    const now = new Date();
-    const today = `${now.getFullYear()} -${String(now.getMonth() + 1).padStart(2, '0')} -${String(now.getDate()).padStart(2, '0')} `;
-    const isJournalLogged = localStorage.getItem(`journal_${today} `);
+    // Calculate Sleep Need using State data
+    // Need = Baseline + Strain + Debt
+    const currentStrain = strainData?.score || 0;
+    const currentDebt = sleepData?.debt || 0;
+    const { str: sleepNeedStr } = calculateSleepNeed(currentStrain, currentDebt);
+
+
 
     const getScoreColor = (score) => {
         if (score >= 67) return 'green';
@@ -199,21 +225,7 @@ const Dashboard = () => {
             </div>
 
             <div className="flex flex-col gap-6">
-                {!isJournalLogged && (
-                    <button
-                        onClick={() => navigate('/journal')}
-                        className="w-full bg-blue-600/20 border border-blue-500/50 p-4 rounded-xl flex items-center justify-between hover:bg-blue-600/30 transition-colors group"
-                    >
-                        <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold">?</div>
-                            <div className="text-left">
-                                <h3 className="font-bold text-blue-100">Daily Journal</h3>
-                                <p className="text-xs text-blue-300">Log yesterday's habits</p>
-                            </div>
-                        </div>
-                        <span className="text-blue-300 group-hover:translate-x-1 transition-transform">→</span>
-                    </button>
-                )}
+
 
                 {/* Permission Error Alert */}
                 {errors.some(e => e.includes("403")) && (
@@ -237,22 +249,33 @@ const Dashboard = () => {
                     </div>
                 )}
 
-                {isRateLimited && (
-                    <div className="bg-yellow-900/50 border border-yellow-600 p-4 rounded text-yellow-200 text-sm">
-                        <p className="font-bold">⚠️ Fitbit API Rate Limit Reached</p>
-                        <p className="mt-1">You have made too many requests recently. Fitbit limits requests to 150 per hour.</p>
-                        <p className="mt-1">Please wait a while (up to an hour) for the limit to reset. I have implemented caching to prevent this in the future.</p>
-                    </div>
-                )}
+
 
 
 
                 {/* Main Metrics Carousel or Stack */}
                 {/* Main Metrics - Compact Single Row */}
                 <div className="grid grid-cols-3 gap-2 w-full justify-items-center">
-                    <div onClick={() => navigate('/strain')} className="cursor-pointer transition-transform hover:scale-105">
-                        <CircularMetric value={strainData.score} label="Strain" color="blue" size={105} />
-                    </div>
+                    {/* Strain Target Calculation */}
+                    {(() => {
+                        const rec = recoveryData?.score || 0;
+                        let targetStrain = 10;
+                        if (rec >= 67) targetStrain = 18;
+                        else if (rec >= 34) targetStrain = 14;
+
+                        return (
+                            <div onClick={() => navigate('/strain')} className="cursor-pointer transition-transform hover:scale-105">
+                                <CircularMetric
+                                    value={strainData.score}
+                                    label="Strain"
+                                    color="blue"
+                                    size={105}
+                                    max={21}
+                                    target={targetStrain}
+                                />
+                            </div>
+                        );
+                    })()}
                     <div onClick={() => navigate('/recovery')} className="cursor-pointer transition-transform hover:scale-105">
                         <CircularMetric value={Math.round(recoveryData.score * 10) / 10} label="Recovery" color={getScoreColor(recoveryData.score)} size={105} />
                     </div>
@@ -265,7 +288,7 @@ const Dashboard = () => {
                 <Card>
                     <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2">Sleep Need</h3>
                     <div className="flex justify-between items-end">
-                        <div className="text-3xl font-bold">{sleepNeed.str}</div>
+                        <div className="text-3xl font-bold">{sleepNeedStr}</div>
                         <div className="text-xs text-gray-500">Based on strain & debt</div>
                     </div>
                 </Card>
@@ -336,16 +359,7 @@ const Dashboard = () => {
                     </button>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4">
-                    <Card onClick={() => navigate('/strain')}>
-                        <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2">Activity</h3>
-                        <div className="text-2xl font-bold">{strainData.activity} <span className="text-sm text-gray-500 font-normal">hrs</span></div>
-                    </Card>
-                    <Card onClick={() => navigate('/strain')}>
-                        <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2">Calories</h3>
-                        <div className="text-2xl font-bold">{strainData.calories.toLocaleString()} <span className="text-sm text-gray-500 font-normal">kcal</span></div>
-                    </Card>
-                </div>
+
             </div>
         </div >
     );

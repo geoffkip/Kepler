@@ -13,18 +13,39 @@ const Trends = () => {
     useEffect(() => {
         const loadData = async () => {
             try {
-                // In a real app, we would fetch 7 days of data. 
-                // For now, we'll simulate a week of data based on today's data + some random variation 
-                // because fetching 7 days of real data might hit rate limits immediately.
+                // Get Date Strings
+                const now = new Date();
+                const todayStr = now.toISOString().split('T')[0];
+                const yDate = new Date(now);
+                yDate.setDate(yDate.getDate() - 1);
+                const yesterdayStr = yDate.toISOString().split('T')[0];
 
-                const [hrData, activityData, sleepRes] = await Promise.all([
-                    fetchHeartRate(),
-                    fetchActivitySummary(),
-                    fetchSleep()
+                // Fetch Today (Real current status) AND Yesterday (Real completed baseline)
+                // We use Promise.allSettled to allow partial failures
+                const results = await Promise.allSettled([
+                    fetchHeartRate('today'),
+                    fetchActivitySummary('today'),
+                    fetchSleep('today'),
+                    fetchHeartRate(yesterdayStr),
+                    fetchActivitySummary(yesterdayStr)
                 ]);
 
-                const todayStrain = processStrainData(hrData, activityData);
+                // Helper to get value or null
+                const getVal = (res) => res.status === 'fulfilled' ? res.value : null;
+
+                const hrToday = getVal(results[0]);
+                const actToday = getVal(results[1]);
+                const sleepRes = getVal(results[2]);
+                const hrYesterday = getVal(results[3]);
+                const actYesterday = getVal(results[4]);
+
+                const todayStrain = processStrainData(hrToday, actToday);
+                const yesterdayStrain = processStrainData(hrYesterday, actYesterday);
                 const todaySleep = processSleepData(sleepRes);
+
+                // Baseline for History: Use Yesterday's strain if valid (>= 4), otherwise default to 12 (Moderate)
+                // This prevents "New User" or "Forgot to wear" days from flatlining the graph
+                const historyBaseline = yesterdayStrain.score >= 4 ? yesterdayStrain.score : 12;
 
                 const decimalToHrMin = (hours) => {
                     const h = Math.floor(hours);
@@ -32,19 +53,30 @@ const Trends = () => {
                     return `${h}h ${m}m`;
                 };
 
-                // Generate mock history based on today's real data (or 0 if missing)
+                // Generate mock history for previous 6 days using Baseline
+                // Index 6 is Today (Real)
                 const history = Array.from({ length: 7 }).map((_, i) => {
                     const day = new Date();
                     day.setDate(day.getDate() - (6 - i));
-                    const rawHours = Math.max(0, (todaySleep.totalSleep || 7) + (Math.random() * 2 - 1));
+
+                    const isToday = i === 6;
+
+                    // If Today, use Real Today Strain. If History, use Baseline +/- variation.
+                    const strainVal = isToday
+                        ? todayStrain.score
+                        : Math.max(0, Math.min(21, historyBaseline + (Math.random() * 4 - 2)));
+
+                    // Sleep: Use today's sleep as anchor for now (or randomize around 7.5)
+                    const sleepBase = todaySleep.totalSleep || 7.5;
+                    const rawHours = Math.max(0, sleepBase + (Math.random() * 2 - 1));
 
                     return {
                         day: day.toLocaleDateString('en-US', { weekday: 'short' }),
-                        strain: Math.round(Math.max(0, Math.min(21, todayStrain.score + (Math.random() * 4 - 2)))),
+                        strain: parseFloat(strainVal.toFixed(1)),
                         recovery: Math.round(Math.max(0, Math.min(100, (todaySleep.score || 80) + (Math.random() * 20 - 10)))),
                         sleepScore: Math.round(Math.max(0, Math.min(100, (todaySleep.score || 80) + (Math.random() * 10 - 5)))),
-                        sleepHours: parseFloat(rawHours.toFixed(1)), // Keep decimal for chart height
-                        sleepTime: decimalToHrMin(rawHours) // String for tooltip display
+                        sleepHours: parseFloat(rawHours.toFixed(1)),
+                        sleepTime: decimalToHrMin(rawHours)
                     };
                 });
 

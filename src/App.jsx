@@ -9,7 +9,7 @@ import SleepDetails from './pages/SleepDetails';
 import Trends from './pages/Trends';
 import HealthMonitor from './pages/HealthMonitor';
 import Activities from './pages/Activities';
-import Journal from './pages/Journal';
+
 import Report from './pages/Report';
 import { useNavigate } from 'react-router-dom';
 import { Browser } from '@capacitor/browser';
@@ -127,14 +127,7 @@ function App() {
             </PrivateRoute>
           }
         />
-        <Route
-          path="/journal"
-          element={
-            <PrivateRoute>
-              <Journal />
-            </PrivateRoute>
-          }
-        />
+
         <Route
           path="/report"
           element={

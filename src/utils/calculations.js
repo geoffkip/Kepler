@@ -45,7 +45,8 @@ export const processStrainData = (hrData, activityData) => {
             min: z.min,
             max: z.max,
             time: z.minutes
-        }))
+        })),
+        steps: summary.steps || 0 // NEW: Steps
     };
 };
 
@@ -61,9 +62,21 @@ export const processSkinTempData = (tempData) => {
 };
 
 // Helper to get formatted time
-const formatHrs = (decimalHours) => {
+export const formatDuration = (decimalHours) => {
+    if (!decimalHours && decimalHours !== 0) return "--";
     const h = Math.floor(decimalHours);
     const m = Math.round((decimalHours - h) * 60);
+    return `${h}h ${m}m`;
+};
+
+// Deprecated local helper, mapping to new export for safety if used fast
+const formatHrs = (d) => {
+    const res = formatDuration(d); // returns string "7h 30m"
+    // The old formatHrs returned object { h, m, str }. 
+    // Let's keep the old signature for calculateSleepNeed to avoid breaking it yet, 
+    // or just refactor calculateSleepNeed to use formatDuration for its string part.
+    const h = Math.floor(d);
+    const m = Math.round((d - h) * 60);
     return { h, m, str: `${h}h ${m}m` };
 };
 
@@ -73,7 +86,7 @@ export const calculateSleepNeed = (strainScore, sleepDebt = 0) => {
     const debt = sleepDebt; // Sleep debt from previous nights
 
     const totalHours = baseline + strainLoad + debt;
-    return formatHrs(totalHours);
+    return formatHrs(totalHours); // Returns { h, m, str }
 };
 
 export const calculateTargetStrain = (recoveryScore) => {
@@ -146,47 +159,157 @@ export const processSleepData = (sleepData) => {
             startTime: null,
             endTime: null,
             totalSleep: 0,
-            stages: { deep: 0, light: 0, rem: 0, awake: 0 }
+            timeInBed: 0,
+            stages: { deep: 0, light: 0, rem: 0, awake: 0 },
+            restorative: { hours: 0, percentage: 0 }
         };
     }
 
     const mainSleep = sleepData.sleep.find(s => s.isMainSleep) || sleepData.sleep[0];
     const summary = mainSleep.levels?.summary || {};
 
-    // Handle "Classic" sleep data (asleep, restless, awake) vs "Stages" (deep, light, rem, wake)
     let deep = 0, light = 0, rem = 0, awake = 0;
 
     if (summary.deep || summary.light || summary.rem) {
-        // Stages available
         deep = summary.deep?.minutes || 0;
         light = summary.light?.minutes || 0;
         rem = summary.rem?.minutes || 0;
         awake = summary.wake?.minutes || 0;
     } else if (summary.asleep) {
-        // Fallback to Classic
-        // We can map 'asleep' to 'light' generically or split it?
-        // Let's just put it all in light for visualization purposes if broken
         light = summary.asleep?.minutes || 0;
-        awake = summary.awake?.minutes || 0;
-        // Count restless as awake or light? Fitbit counts it as part of efficiency usually?
-        // Let's add restless to 'awake' or ignored? Whoop uses 'Wake', 'Light', 'REM', 'SWS'.
-        // Restless is kinda like Light/Wake.
-        // Let's put restless in "Awake" for now to penalize it visible.
-        awake += summary.restless?.minutes || 0;
+        awake = (summary.awake?.minutes || 0) + (summary.restless?.minutes || 0);
     }
+
+    const minutesAsleep = mainSleep.minutesAsleep || 0;
+    const timeInBed = mainSleep.timeInBed || 0;
 
     return {
         score: mainSleep.efficiency || 0,
         startTime: mainSleep.startTime,
         endTime: mainSleep.endTime,
-        totalSleep: parseFloat((mainSleep.minutesAsleep / 60).toFixed(1)),
+        totalSleep: parseFloat((minutesAsleep / 60).toFixed(1)),
+        timeInBed: parseFloat((timeInBed / 60).toFixed(1)),
         stages: {
             deep: parseFloat((deep / 60).toFixed(1)),
             light: parseFloat((light / 60).toFixed(1)),
             rem: parseFloat((rem / 60).toFixed(1)),
             awake: parseFloat((awake / 60).toFixed(1))
+        },
+        restorative: {
+            hours: parseFloat(((deep + rem) / 60).toFixed(1)),
+            percentage: minutesAsleep > 0 ? Math.round(((deep + rem) / minutesAsleep) * 100) : 0
         }
     };
+};
+
+export const calculateSleepConsistency = (sleepHistory) => {
+    if (!sleepHistory || !sleepHistory.sleep || sleepHistory.sleep.length < 2) return 100;
+
+    const bedtimes = [];
+    const waketimes = [];
+
+    sleepHistory.sleep.forEach(log => {
+        if (!log.startTime || !log.endTime) return;
+
+        const start = new Date(log.startTime);
+        const end = new Date(log.endTime);
+
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
+
+        const getMinutesFromNoon = (date) => {
+            let minutes = date.getHours() * 60 + date.getMinutes();
+            if (date.getHours() < 12) {
+                minutes += 24 * 60;
+            }
+            return minutes;
+        };
+
+        bedtimes.push(getMinutesFromNoon(start));
+        waketimes.push(getMinutesFromNoon(end));
+    });
+
+    const calculateSD = (data) => {
+        if (data.length < 2) return 0;
+        const mean = data.reduce((a, b) => a + b, 0) / data.length;
+        const squareDiffs = data.map(value => Math.pow(value - mean, 2));
+        const avgSquareDiff = squareDiffs.reduce((a, b) => a + b, 0) / squareDiffs.length;
+        return Math.sqrt(avgSquareDiff);
+    };
+
+    const bedSD = calculateSD(bedtimes);
+    const wakeSD = calculateSD(waketimes);
+
+    const totalDeviation = bedSD + wakeSD;
+    const consistencyScore = Math.max(0, 100 - (totalDeviation * 0.3));
+
+    return Math.round(consistencyScore) || 0; // Prevent NaN
+};
+
+export const calculateSleepDebt = (sleepHistory) => {
+    // Calculate accumulated debt over the fetched history period (e.g. 7 days).
+    if (!sleepHistory || !sleepHistory.sleep) return 0;
+
+    const baselineNeed = 8.0; // Standard 8 hour baseline.
+    let totalDebt = 0;
+
+    // Use up to 7 recent entries
+    const recentSleep = sleepHistory.sleep.slice(0, 7);
+
+    recentSleep.forEach(log => {
+        const hours = (log.minutesAsleep || 0) / 60;
+        const diff = baselineNeed - hours;
+        // If diff is positive (underslept), debt increases.
+        // If diff is negative (overslept), debt decreases (payback).
+        totalDebt += diff;
+    });
+
+    // Debt cannot be negative.
+    // Cap debt at 2.0 hours max to ensure Sleep Need stays realistic (e.g. max 10h total).
+    const cappedDebt = Math.min(2.0, totalDebt);
+    return Math.max(0, parseFloat(cappedDebt.toFixed(1)));
+};
+
+export const calculateLeanMass = (weightData, fatData) => {
+    // weightData and fatData might now be arrays (logs) due to '1m' fetch.
+    // Pick the last entry (most recent).
+
+    // Weight can be { weight: [...] } or just { weight: [] }
+    const weightLogs = weightData?.weight || [];
+    const fatLogs = fatData?.fat || [];
+
+    const latestWeight = weightLogs.length > 0 ? weightLogs[weightLogs.length - 1].weight : 0;
+    const latestFat = fatLogs.length > 0 ? fatLogs[fatLogs.length - 1].fat : 0;
+
+    if (!latestWeight) return { weight: 0, leanMass: 0, fatPct: 0 };
+
+    const leanPct = 100 - latestFat;
+    const leanMass = (latestWeight * leanPct) / 100;
+
+    return {
+        weight: parseFloat(latestWeight.toFixed(1)),
+        leanMass: parseFloat(leanMass.toFixed(1)),
+        fatPct: parseFloat(latestFat.toFixed(1))
+    };
+};
+
+export const processCardioScore = (cardioData) => {
+    // VO2 Max is usually in cardioScore[index].value.vo2Max
+    // We fetched 1m range, so find the latest entry.
+    const logs = cardioData?.cardioScore || [];
+    if (logs.length === 0) return "--";
+
+    const latest = logs[logs.length - 1];
+    return latest.value?.vo2Max || "--";
+};
+
+export const processStressScore = (stressData) => {
+    // Fitbit Stress Management Score: 0-100
+    // stressData might be an array if we fetched a range, or object if single day?
+    // Usually it's { stress: [ { ... } ] }
+    if (!stressData || !stressData.stress) return 0;
+    // Pick latest
+    const latest = stressData.stress[stressData.stress.length - 1];
+    return latest?.value || 0;
 };
 
 export const getMockStrainData = () => ({

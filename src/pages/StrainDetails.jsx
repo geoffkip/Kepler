@@ -1,7 +1,13 @@
+
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchHeartRate, fetchActivitySummary } from '../services/fitbitApi';
-import { processStrainData, getMockStrainData } from '../utils/calculations';
+import { fetchHeartRate, fetchActivitySummary, fetchStressScore } from '../services/fitbitApi';
+import {
+    processStrainData,
+    processStressScore,
+    formatDuration,
+    getMockStrainData
+} from '../utils/calculations';
 import Card from '../components/ui/Card';
 import CircularMetric from '../components/ui/CircularMetric';
 
@@ -12,14 +18,19 @@ const StrainDetails = () => {
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [hrData, activityData] = await Promise.all([
+                const results = await Promise.allSettled([
                     fetchHeartRate(),
                     fetchActivitySummary()
                 ]);
-                setData(processStrainData(hrData, activityData));
+
+                const hrData = results[0].status === 'fulfilled' ? results[0].value : null;
+                const activityData = results[1].status === 'fulfilled' ? results[1].value : null;
+
+                const baseStrain = processStrainData(hrData, activityData);
+
+                setData({ ...baseStrain });
             } catch (error) {
-                console.error("Error fetching strain details", error);
-                // No mock fallback
+                console.error("Critical error in strain data processing", error);
                 setData(processStrainData(null, null));
             }
         };
@@ -43,12 +54,17 @@ const StrainDetails = () => {
 
             <div className="grid grid-cols-1 gap-4">
                 <Card>
-                    <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2">Activity</h3>
-                    <div className="text-2xl font-bold">{data.activity} <span className="text-sm text-gray-500 font-normal">hrs</span></div>
+                    <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2">Active Time</h3>
+                    <div className="text-2xl font-bold">{formatDuration(data.activity)}</div>
                 </Card>
                 <Card>
                     <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2">Calories</h3>
                     <div className="text-2xl font-bold">{data.calories.toLocaleString()} <span className="text-sm text-gray-500 font-normal">kcal</span></div>
+                </Card>
+
+                <Card>
+                    <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2">Steps</h3>
+                    <div className="text-2xl font-bold">{data.steps?.toLocaleString()}</div>
                 </Card>
                 <Card>
                     <h3 className="text-gray-400 text-xs uppercase tracking-wider mb-2">Heart Rate</h3>
@@ -76,16 +92,17 @@ const StrainDetails = () => {
                                 <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
                                     <div
                                         className="h-full bg-blue-500"
-                                        style={{ width: `${(zone.time / 60) * 100}%` }} // Rough percentage for demo
+                                        style={{ width: `${(zone.time / 60) * 100}% ` }} // Rough percentage for demo
                                     ></div>
                                 </div>
                             </div>
                         ))}
                     </div>
                 </Card>
-            </div>
-        </div>
+            </div >
+        </div >
     );
 };
 
 export default StrainDetails;
+

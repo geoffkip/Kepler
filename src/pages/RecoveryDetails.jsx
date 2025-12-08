@@ -5,9 +5,10 @@ import {
     fetchHRV,
     fetchSpO2,
     fetchBreathingRate,
-    fetchHeartRate
+    fetchHeartRate,
+
 } from '../services/fitbitApi';
-import { processRecoveryData, getMockRecoveryData } from '../utils/calculations';
+import { processRecoveryData, calculateLeanMass, processCardioScore, getMockRecoveryData } from '../utils/calculations';
 import Card from '../components/ui/Card';
 import CircularMetric from '../components/ui/CircularMetric';
 
@@ -18,7 +19,7 @@ const RecoveryDetails = () => {
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [sleepData, hrvData, spo2Data, brData, hrData] = await Promise.all([
+                const results = await Promise.allSettled([
                     fetchSleep(),
                     fetchHRV(),
                     fetchSpO2(),
@@ -26,11 +27,20 @@ const RecoveryDetails = () => {
                     fetchHeartRate()
                 ]);
 
-                const rhr = hrData['activities-heart']?.[0]?.value?.restingHeartRate || 60;
-                setData(processRecoveryData(sleepData, hrvData, spo2Data, brData, rhr));
+                const sleepData = results[0].status === 'fulfilled' ? results[0].value : null;
+                const hrvData = results[1].status === 'fulfilled' ? results[1].value : null;
+                const spo2Data = results[2].status === 'fulfilled' ? results[2].value : null;
+                const brData = results[3].status === 'fulfilled' ? results[3].value : null;
+                const hrData = results[4].status === 'fulfilled' ? results[4].value : null;
+
+                const rhr = hrData ? (hrData['activities-heart']?.[0]?.value?.restingHeartRate || 60) : 60;
+                const baseData = processRecoveryData(sleepData, hrvData, spo2Data, brData, rhr);
+
+                setData({
+                    ...baseData
+                });
             } catch (error) {
-                console.error("Error fetching recovery details", error);
-                // No mock fallback
+                console.error("Critical error fetching recovery details", error);
                 setData(processRecoveryData(null, null, null, null));
             }
         };
@@ -71,7 +81,7 @@ const RecoveryDetails = () => {
                     <div className="text-2xl font-bold">{data.spo2}%</div>
                 </Card>
             </div>
-        </div>
+        </div >
     );
 };
 

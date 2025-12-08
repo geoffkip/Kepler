@@ -124,10 +124,12 @@ export const fetchHeartRate = async (date = 'today', period = '1d') => {
 };
 
 // Sleep API (v1.2) - Was previously missing slash '/sleepdate/' -> '/sleep/date/'
+// Sleep API (v1.2) - Was previously missing slash '/sleepdate/' -> '/sleep/date/'
 export const fetchSleep = async (date = 'today') => {
     const dateStr = date === 'today' ? getTodayDate() : date;
     // v1.2 is required for sleep stages
-    return requestWithCache(`/user/-/sleep/date/${dateStr}.json`, dateStr, true);
+    const data = await requestWithCache(`/user/-/sleep/date/${dateStr}.json`, dateStr, true);
+    return data;
 };
 
 // HRV API (v1)
@@ -184,4 +186,79 @@ export const fetchRecentActivities = async (limit = 20, offset = 0) => {
     );
     console.log("Recent Activities RAW:", data);
     return data;
+};
+
+// --- NEW METRICS IMPLEMENTATION ---
+
+// 1. Weight & Body Composition
+export const fetchWeight = async (date = 'today') => {
+    const endDate = date === 'today' ? getTodayDate() : date;
+    const d = new Date(endDate);
+    d.setDate(d.getDate() - 90); // Look back 90 days
+    const fromYear = d.getFullYear();
+    const fromMonth = String(d.getMonth() + 1).padStart(2, '0');
+    const fromDay = String(d.getDate()).padStart(2, '0');
+    const startDate = `${fromYear}-${fromMonth}-${fromDay}`;
+
+    // GET /1/user/-/body/log/weight/date/[startDate]/[endDate].json
+    const data = await requestWithCache(`/user/-/body/log/weight/date/${startDate}/${endDate}.json`, `weight_${startDate}_${endDate}`);
+    console.log("Weight Data RAW:", data);
+    return data;
+};
+
+export const fetchBodyFat = async (date = 'today') => {
+    const endDate = date === 'today' ? getTodayDate() : date;
+    const d = new Date(endDate);
+    d.setDate(d.getDate() - 90); // Look back 90 days
+    const fromYear = d.getFullYear();
+    const fromMonth = String(d.getMonth() + 1).padStart(2, '0');
+    const fromDay = String(d.getDate()).padStart(2, '0');
+    const startDate = `${fromYear}-${fromMonth}-${fromDay}`;
+
+    // GET /1/user/-/body/log/fat/date/[startDate]/[endDate].json
+    const data = await requestWithCache(`/user/-/body/log/fat/date/${startDate}/${endDate}.json`, `fat_${startDate}_${endDate}`);
+    console.log("Body Fat Data RAW:", data);
+    return data;
+};
+
+// 2. Cardio Fitness Score (VO2 Max)
+export const fetchCardioScore = async (date = 'today') => {
+    const endDate = date === 'today' ? getTodayDate() : date;
+    const d = new Date(endDate);
+    d.setDate(d.getDate() - 90); // Look back 90 days
+    const fromYear = d.getFullYear();
+    const fromMonth = String(d.getMonth() + 1).padStart(2, '0');
+    const fromDay = String(d.getDate()).padStart(2, '0');
+    const startDate = `${fromYear}-${fromMonth}-${fromDay}`;
+
+    // GET /1/user/-/cardioscore/date/[startDate]/[endDate].json
+    const data = await requestWithCache(`/user/-/cardioscore/date/${startDate}/${endDate}.json`, `cardio_${startDate}_${endDate}`);
+    console.log("Cardio Score RAW:", data);
+    return data;
+};
+
+// 3. Stress Management Score
+// Range fetch failed (Error 400). Reverting to single day.
+export const fetchStressScore = async (date = 'today') => {
+    const dateStr = date === 'today' ? getTodayDate() : date;
+    // GET /1/user/-/stress/score/date/[date].json
+    const data = await requestWithCache(`/user/-/stress/score/date/${dateStr}.json`, `stress_${dateStr}`);
+    console.log("Stress Score RAW:", data);
+    return data;
+}
+
+// 4. Sleep History for Consistency
+export const fetchSleepHistory = async (days = 7) => {
+    const today = getTodayDate();
+    const date = new Date();
+    date.setDate(date.getDate() - days);
+
+    // FIX: Use local time for start date similar to getTodayDate()
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const startDate = `${year}-${month}-${day}`;
+
+    // GET /1.2/user/-/sleep/date/[startDate]/[endDate].json
+    return requestWithCache(`/user/-/sleep/date/${startDate}/${today}.json`, `sleep_hist_${startDate}_${today}`, true);
 };

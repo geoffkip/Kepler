@@ -5,7 +5,8 @@ import { Preferences } from '@capacitor/preferences';
 const CLIENT_ID = import.meta.env.VITE_FITBIT_CLIENT_ID;
 
 // Scopes required for the app
-const SCOPES = 'heartrate sleep profile activity oxygen_saturation respiratory_rate';
+const SCOPES_ARRAY = ['activity', 'heartrate', 'location', 'nutrition', 'profile', 'settings', 'sleep', 'social', 'weight', 'oxygen_saturation', 'respiratory_rate', 'temperature', 'stress'];
+const SCOPES = SCOPES_ARRAY.join(' ');
 
 export const loginWithFitbit = async () => {
     console.log('Initiating Fitbit login...');

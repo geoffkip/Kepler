@@ -1,4 +1,4 @@
-# Kepler Health
+# Kepler
 
 A sophisticated health & fitness dashboard inspired by Whoop, built for Fitbit users.
 

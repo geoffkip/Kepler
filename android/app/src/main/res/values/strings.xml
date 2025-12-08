@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">KeplerHealth</string>
-    <string name="title_activity_main">KeplerHealth</string>
+    <string name="app_name">Kepler</string>
+    <string name="title_activity_main">Kepler</string>
     <string name="package_name">com.kepler.health</string>
     <string name="custom_url_scheme">com.kepler.health</string>
 </resources>
