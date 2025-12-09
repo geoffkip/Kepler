@@ -95,51 +95,105 @@ export const calculateTargetStrain = (recoveryScore) => {
     return { min: 0, max: 10, label: "Rest / Active Recovery" };
 };
 
-export const processRecoveryData = (sleepData, hrvData, spo2Data, brData, rhr = 0, skinTempData = null) => {
-    // HRV - Normalizing mock logic (Whoop scale: 0-100ish, but varies wildly by person)
-    // We treat 100ms as "high" (100% contribution) for this simple calc
-    const hrv = hrvData?.hrv?.[0]?.value?.dailyRmssd || 0;
+export const calculateBaselines = (dataArray) => {
+    if (!dataArray || dataArray.length < 2) return null;
 
-    // Sleep Score (Fitbit provides 0-100)
+    // Filter out zeros or nulls
+    const valid = dataArray.filter(v => v > 0);
+    if (valid.length < 2) return null;
+
+    const mean = valid.reduce((a, b) => a + b, 0) / valid.length;
+    const squareDiffs = valid.map(v => Math.pow(v - mean, 2));
+    const avgSquareDiff = squareDiffs.reduce((a, b) => a + b, 0) / squareDiffs.length;
+    const stdDev = Math.sqrt(avgSquareDiff);
+
+    return { mean, stdDev };
+};
+
+export const processRecoveryData = (sleepData, hrvData, spo2Data, brData, rhr = 0, skinTempData = null, baselines = null) => {
+    // 1. Sleep Score (40%)
+    // Usage: Direct efficiency score from Fitbit (0-100)
     const sleepScore = sleepData?.sleep?.[0]?.efficiency || 0;
 
-    // RHR Contribution (Lower is better, assume 40 is max score, 100 is min score)
-    // This is a rough approximation.
-    const rhrScore = rhr > 0 ? Math.max(0, 100 - (rhr - 40)) : 0;
+    // 2. HRV Score (40%) - "Smart" vs "Static"
+    const hrv = hrvData?.hrv?.[0]?.value?.dailyRmssd || 0;
+    let hrvScore = 0;
 
-    // Components weights: Sleep 40%, HRV 40%, RHR 20%
-    // If data is missing, we re-weight.
+    if (baselines?.hrv) {
+        // Personalized: Compare to 30-day baseline
+        const { mean, stdDev } = baselines.hrv;
+        // If within 1 SD of mean (or higher), full score.
+        // If below mean - 1 SD, start penalizing.
+        // Formula: Z-Score based.
+        // Target: Mean.
 
+        if (hrv >= mean - stdDev) {
+            // Good zone (Average or better)
+            // Bonus for being way higher? Cap at 100.
+            hrvScore = 100;
+        } else {
+            // Below normal range (Mean - 1SD)
+            // Example: Mean 50, SD 5. Data 40 (2 SD drops).
+            // Drop linearly: 100 at (Mean-SD), 0 at (Mean-3SD).
+            const lowerBound = mean - stdDev; // Score 100 threshold
+            const zeroBound = mean - (3 * stdDev); // Score 0 threshold
+            const range = lowerBound - zeroBound;
+
+            const pct = (hrv - zeroBound) / range;
+            hrvScore = Math.max(0, Math.min(100, pct * 100));
+        }
+    } else {
+        // Fallback: Static Benchmark (80ms = 100)
+        hrvScore = Math.min(100, (hrv / 80) * 100);
+    }
+
+    // 3. RHR Score (20%) - "Smart" vs "Static"
+    let rhrScore = 0;
+    if (baselines?.rhr) {
+        // Personalized: Compare to 30-day baseline
+        const { mean, stdDev } = baselines.rhr;
+
+        // RHR: Lower is better.
+        // If rhr <= mean + stdDev, good score.
+        // If rhr > mean + stdDev, penalize.
+
+        if (rhr <= mean + stdDev) {
+            rhrScore = 100;
+        } else {
+            // Higher than normal range (Mean + 1SD)
+            // Linearly drop to 0 at Mean + 3SD
+            const upperBound = mean + stdDev; // Score 100 threshold
+            const failBound = mean + (3 * stdDev); // Score 0 threshold
+            const range = failBound - upperBound;
+
+            // If RHR=60, Upper=50, Fail=60 -> Score 0.
+            const diff = rhr - upperBound;
+            const pct = 1 - (diff / range);
+            rhrScore = Math.max(0, Math.min(100, pct * 100));
+        }
+    } else {
+        // Fallback: Static Benchmark (40bpm = 100)
+        rhrScore = rhr > 0 ? Math.max(0, 100 - (rhr - 40)) : 0;
+    }
+
+
+    // Weighted Average
     let score = 0;
     let divisor = 0;
 
-    if (sleepScore > 0) {
-        score += sleepScore * 0.4;
-        divisor += 0.4;
-    }
+    if (sleepScore > 0) { score += sleepScore * 0.4; divisor += 0.4; }
 
-    if (hrv > 0) {
-        // Normalize HRV: 100ms+ -> 100 score. 
-        const hrvScore = Math.min(100, (hrv / 80) * 100);
-        score += hrvScore * 0.4;
-        divisor += 0.4;
-    } else {
-        // If HRV is missing but we have sleep, maybe purely sleep based?
-        // Or if we have nothing?
-    }
-
-    if (rhr > 0) {
-        score += rhrScore * 0.2;
-        divisor += 0.2;
-    }
+    // Always include HRV/RHR weights even if current data is 0 (it will just drag score down properly)
+    // But if we have NO data (hrv=0), maybe exclude?
+    // Let's stick to "If we have a value, weight it".
+    if (hrv > 0) { score += hrvScore * 0.4; divisor += 0.4; }
+    if (rhr > 0) { score += rhrScore * 0.2; divisor += 0.2; }
 
     const finalRecovery = divisor > 0 ? Math.round(score / divisor) : 0;
 
-    // SpO2
+    // SpO2, BR, SkinTemp remain raw
     const spo2 = spo2Data?.value?.avg || 0;
-    // Breathing Rate
     const br = brData?.br?.[0]?.value?.breathingRate || 0;
-    // Skin Temp
     const skinTemp = skinTempData?.tempSkin?.[0]?.value?.nightlyRelative || 0;
 
     return {
@@ -148,7 +202,9 @@ export const processRecoveryData = (sleepData, hrvData, spo2Data, brData, rhr = 
         rhr: rhr,
         respiratoryRate: br,
         spo2: spo2,
-        skinTemp: skinTemp
+        skinTemp: skinTemp,
+        // Pass back baselines for UI display
+        baselines: baselines
     };
 };
 

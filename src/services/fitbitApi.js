@@ -156,6 +156,17 @@ export const fetchHRV = async (date = 'today') => {
     return requestWithCache(`/user/-/hrv/date/${dateStr}.json`, dateStr, false); // Explicitly v1
 };
 
+// New: Fetch HRV History for Baseline (30 days)
+export const fetchHRVHistory = async (days = 30) => {
+    const endDate = getTodayDate();
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    const startDate = d.toISOString().split('T')[0];
+
+    // GET /1/user/-/hrv/date/[startDate]/[endDate].json
+    return requestWithCache(`/user/-/hrv/date/${startDate}/${endDate}.json`, `hrv_${startDate}_${endDate}`, false);
+};
+
 // SpO2 API (v1)
 export const fetchSpO2 = async (date = 'today') => {
     const dateStr = date === 'today' ? getTodayDate() : date;
@@ -204,6 +215,79 @@ export const fetchRecentActivities = async (limit = 20, offset = 0) => {
     );
     console.log("Recent Activities RAW:", data);
     return data;
+};
+
+// 5. Strain History (Computed)
+export const fetchStrainHistory = async (days = 7) => {
+    const endDate = getTodayDate();
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    const startDate = d.toISOString().split('T')[0];
+
+    // We need multiple time series to compute Strain
+    // Strain ≈ (ActiveMins + Calories)
+    // Endpoints:
+    // /activities/calories/date/2023-01-01/2023-01-07.json
+    // /activities/minutesVeryActive/date/...
+    // /activities/minutesFairlyActive/date/...
+    // /activities/minutesLightlyActive/date/...
+
+    // Helper for parallel fetch
+    const fetchSeries = (resource) =>
+        requestWithCache(
+            `/user/-/activities/${resource}/date/${startDate}/${endDate}.json`,
+            `${resource}_${startDate}_${endDate}`,
+            false
+        );
+
+    const [calData, veryData, fairData, lightData] = await Promise.all([
+        fetchSeries('calories'),
+        fetchSeries('minutesVeryActive'),
+        fetchSeries('minutesFairlyActive'),
+        fetchSeries('minutesLightlyActive')
+    ]);
+
+    // Map by date
+    // Structure: { "activities-calories": [ { dateTime: "...", value: "..." } ... ] }
+    const mapByDate = (arr, key) => {
+        const map = {};
+        if (!arr) return map;
+        arr.forEach(item => {
+            map[item.dateTime] = Number(item.value);
+        });
+        return map;
+    };
+
+    const cals = mapByDate(calData['activities-calories']);
+    const very = mapByDate(veryData['activities-minutesVeryActive']);
+    const fair = mapByDate(fairData['activities-minutesFairlyActive']);
+    const light = mapByDate(lightData['activities-minutesLightlyActive']);
+
+    // Combine
+    const history = [];
+    const dateKeys = Object.keys(cals).sort(); // dates
+
+    dateKeys.forEach(date => {
+        const calories = cals[date] || 0;
+        const activeMins = (very[date] || 0) + (fair[date] || 0);
+        const lightMins = light[date] || 0;
+
+        // Calculate Strain (Approx)
+        // Formula matching calculations.js: (ActiveMinutes / 60) * 4 + (Calories / 2000) * 6
+        // Capped at 21
+        const strainScore = Math.min(21, Math.max(0, (activeMins / 60) * 4 + (calories / 2000) * 6));
+
+        history.push({
+            date,
+            strain: parseFloat(strainScore.toFixed(1)),
+            calories,
+            activeMins,
+            lightMins
+        });
+    });
+
+    console.log("Calculated Strain History:", history);
+    return history;
 };
 
 // --- NEW METRICS IMPLEMENTATION ---

@@ -66,7 +66,9 @@ const Activities = () => {
                 ) : (
                     activities.map((activity, index) => (
                         <Card key={`${activity.logId}-${index}`}>
-                            <div className="flex justify-between items-start">
+                            <div
+                                className="flex justify-between items-start"
+                            >
                                 <div>
                                     <h3 className="font-bold text-lg">{activity.activityName}</h3>
                                     <p className="text-xs text-gray-400">
